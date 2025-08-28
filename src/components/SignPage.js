@@ -7,7 +7,7 @@ import 'react-toastify/dist/ReactToastify.css';
 
 Modal.setAppElement('#root');
 
-const SignPage = ({ setIsAuthenticated, setUserType, setUserData, darkMode }) => {
+const SignPage = ({ setIsAuthenticated, setUserType, setUserData, darkMode, userType }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({
     firstName: '',
@@ -35,41 +35,41 @@ const SignPage = ({ setIsAuthenticated, setUserType, setUserData, darkMode }) =>
   };
 
   const validateForm = () => {
-  if (!isLogin) {
-    if (!formData.firstName?.trim() || 
-        !formData.lastName?.trim() || 
-        !formData.birthday || 
-        !formData.gender || 
-        !formData.email?.trim() || 
-        !formData.password) {
-      setError('All fields are required');
-      return false;
+    if (!isLogin) {
+      if (!formData.firstName?.trim() || 
+          !formData.lastName?.trim() || 
+          !formData.birthday || 
+          !formData.gender || 
+          !formData.email?.trim() || 
+          !formData.password) {
+        setError('All fields are required');
+        return false;
+      }
+      
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+        setError('Please enter a valid email address');
+        return false;
+      }
+      
+      if (formData.password.length < 6) {
+        setError('Password must be at least 6 characters');
+        return false;
+      }
+    } else {
+      if (!formData.email?.trim() || !formData.password) {
+        setError('Email and password are required');
+        return false;
+      }
     }
-    
-    // Validate email format
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      setError('Please enter a valid email address');
-      return false;
-    }
-    
-    if (formData.password.length < 6) {
-      setError('Password must be at least 6 characters');
-      return false;
-    }
-  } else {
-    if (!formData.email?.trim() || !formData.password) {
-      setError('Email and password are required');
-      return false;
-    }
-  }
-  return true;
-};
+    return true;
+  };
 
   const handleLoginSuccess = (responseData) => {
     const { token, accountType, firstName, lastName, email, birthday, gender } = responseData;
     
     localStorage.setItem('authToken', token);
-    setUserType(accountType === 'ADMIN' ? 'admin' : 'user');
+    setUserType(accountType === 'ADMIN' ? 'admin' : 
+               accountType === 'SYSTEM_OWNER' ? 'system_owner' : 'user');
     setUserData({
       firstName,
       lastName,
@@ -82,28 +82,39 @@ const SignPage = ({ setIsAuthenticated, setUserType, setUserData, darkMode }) =>
     navigate('/home');
   };
 
- // In SignPage.js
-const handleSubmit = async (e) => {
-  e.preventDefault();
-  setLoading(true);
-  setError('');
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
 
-  if (!validateForm()) {
-    setLoading(false);
-    return;
-  }
+    if (!validateForm()) {
+      setLoading(false);
+      return;
+    }
 
-  try {
-    const endpoint = isLogin 
-      ? `${API_BASE_URL}/auth/login` 
-      : `${API_BASE_URL}/users/register`;
+    try {
+      // Fixed endpoint selection
+      let endpoint;
+      let requestData;
+      let headers = { 'Content-Type': 'application/json' };
 
-    const requestData = isLogin
-      ? {
+      if (isLogin) {
+        endpoint = `${API_BASE_URL}/auth/login`;
+        requestData = {
           email: formData.email.trim().toLowerCase(),
           password: formData.password
+        };
+      } else {
+        // For registration, always use the /users/register endpoint for regular users and admins
+        // System owner registration should be handled differently (requires existing system owner to create)
+        if (formData.accountType === 'SYSTEM_OWNER') {
+          setError('System Owner accounts can only be created by existing System Owners through the admin panel');
+          setLoading(false);
+          return;
         }
-      : {
+
+        endpoint = `${API_BASE_URL}/users/register`;
+        requestData = {
           firstName: formData.firstName.trim(),
           lastName: formData.lastName.trim(),
           email: formData.email.trim().toLowerCase(),
@@ -112,84 +123,99 @@ const handleSubmit = async (e) => {
           gender: formData.gender,
           accountType: formData.accountType
         };
+      }
 
-    const response = await axios.post(endpoint, requestData);
-    
-    if (response.status === 403 && response.data?.isDeactivated) {
-      setDeactivatedUser({
-        email: formData.email.trim().toLowerCase(),
-        isDeactivated: true
+      const response = await axios.post(endpoint, requestData, { headers });
+      
+      // Handle deactivated account response
+      if (response.status === 403 && response.data?.isDeactivated) {
+        setDeactivatedUser({
+          email: formData.email.trim().toLowerCase(),
+          isDeactivated: true
+        });
+        setShowReactivateModal(true);
+        return;
+      }
+
+      if (isLogin) {
+        handleLoginSuccess(response.data);
+      } else {
+        // After successful registration, automatically log in the user
+        toast.success('Registration successful! Logging you in...');
+        
+        const loginResponse = await axios.post(`${API_BASE_URL}/auth/login`, {
+          email: formData.email.trim().toLowerCase(),
+          password: formData.password
+        });
+        
+        handleLoginSuccess(loginResponse.data);
+      }
+    } catch (err) {
+      console.error('Error:', err);
+      
+      // Handle specific error responses
+      if (err.response?.status === 409) {
+        setError('An account with this email already exists. Please use a different email or try logging in.');
+      } else if (err.response?.status === 403 && err.response.data?.isDeactivated) {
+        setDeactivatedUser({
+          email: formData.email.trim().toLowerCase(),
+          isDeactivated: true
+        });
+        setShowReactivateModal(true);
+      } else {
+        setError(
+          err.response?.data?.message || 
+          err.message || 
+          (isLogin ? 'Login failed' : 'Registration failed')
+        );
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReactivation = async () => {
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/reactivate`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: formData.email.trim().toLowerCase(),
+          password: formData.password
+        })
       });
-      setShowReactivateModal(true);
-      return;
-    }
 
-    if (isLogin) {
-      handleLoginSuccess(response.data);
-    } else {
-      // For registration, automatically log the user in
-      const loginResponse = await axios.post(`${API_BASE_URL}/auth/login`, {
-        email: formData.email.trim().toLowerCase(),
-        password: formData.password
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Reactivation failed');
+      }
+
+      const verifyResponse = await fetch(`${API_BASE_URL}/users/check-active?email=${encodeURIComponent(formData.email)}`, {
+        headers: { 'Authorization': `Bearer ${data.token}` }
       });
-      handleLoginSuccess(loginResponse.data);
+      
+      if (!verifyResponse.ok) {
+        throw new Error('Failed to verify reactivation status');
+      }
+
+      localStorage.setItem('authToken', data.token);
+      setIsAuthenticated(true);
+      setShowReactivateModal(false);
+      navigate('/home');
+
+    } catch (err) {
+      console.error('Reactivation error:', err);
+      setError(err.message || 'Failed to reactivate account');
+    } finally {
+      setLoading(false);
     }
-  } catch (err) {
-    console.error('Error:', err);
-    setError(
-      err.response?.data?.message || 
-      err.message || 
-      (isLogin ? 'Login failed' : 'Registration failed')
-    );
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
-const handleReactivation = async () => {
-  setLoading(true);
-  setError('');
-
-  try {
-    console.log('Attempting reactivation for:', deactivatedUser.email); // Debug log
-    
-    const response = await fetch('http://localhost:8080/api/users/reactivate', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: formData.email.trim().toLowerCase(),
-        password: formData.password
-      })
-    });
-
-    const data = await response.json();
-    console.log('Reactivation response:', data); // Debug log
-
-    if (!response.ok) {
-      throw new Error(data.message || 'Reactivation failed');
-    }
-
-    // Verify the account is now active
-    const verifyResponse = await fetch(`http://localhost:8080/api/users/check-active?email=${encodeURIComponent(formData.email)}`, {
-      headers: { 'Authorization': `Bearer ${data.token}` }
-    });
-    
-    if (!verifyResponse.ok) {
-      throw new Error('Failed to verify reactivation status');
-    }
-
-    localStorage.setItem('authToken', data.token);
-    setIsAuthenticated(true);
-    setShowReactivateModal(false);
-    navigate('/home');
-
-  } catch (err) {
-    console.error('Reactivation error:', err); // Debug log
-    setError(err.message || 'Failed to reactivate account');
-  } finally {
-    setLoading(false);
-  }
-};
+  // ... rest of your component code remains the same (styles, JSX, etc.)
 
   const styles = {
     container: {
@@ -360,34 +386,6 @@ const handleReactivation = async () => {
     }
   };
 
-  const buttonStyles = {
-    primary: {
-      backgroundColor: '#3498db',
-      color: 'white',
-      padding: '10px 20px',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      margin: '0 5px',
-      fontSize: '14px'
-    },
-    secondary: {
-      backgroundColor: darkMode ? '#333' : '#e0e0e0',
-      color: darkMode ? '#ffffff' : '#333',
-      padding: '10px 20px',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      margin: '0 5px',
-      fontSize: '14px'
-    },
-    disabled: {
-      backgroundColor: '#bdc3c7',
-      color: '#7f8c8d',
-      cursor: 'not-allowed'
-    }
-  };
-
   return (
     <div style={styles.container}>
       <div style={styles.card}>
@@ -451,20 +449,20 @@ const handleReactivation = async () => {
                 />
               </div>
               <div style={styles.inputGroup}>
-               <select
-  name="gender"
-  value={formData.gender}
-  onChange={handleChange}
-  style={{...styles.input, padding: '12px 15px', color: formData.gender ? (darkMode ? '#ffffff' : '#2c3e50') : '#7f8c8d'}}
-  required
-  disabled={loading}
->
-  <option value="">Select Gender *</option>
-  <option value="MALE">Male</option>
-  <option value="FEMALE">Female</option>
-  <option value="OTHER">Other</option>
-  <option value="UNSPECIFIED">Prefer not to say</option>
-</select>
+                <select
+                  name="gender"
+                  value={formData.gender}
+                  onChange={handleChange}
+                  style={{...styles.input, padding: '12px 15px', color: formData.gender ? (darkMode ? '#ffffff' : '#2c3e50') : '#7f8c8d'}}
+                  required
+                  disabled={loading}
+                >
+                  <option value="">Select Gender *</option>
+                  <option value="MALE">Male</option>
+                  <option value="FEMALE">Female</option>
+                  <option value="OTHER">Other</option>
+                  <option value="UNSPECIFIED">Prefer not to say</option>
+                </select>
               </div>
               <div style={styles.inputGroup}>
                 <label style={styles.label}>Account Type *</label>
@@ -563,68 +561,68 @@ const handleReactivation = async () => {
         </div>
       </div>
 
-{showReactivateModal && (
-    <div style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 1000
-    }}>
+      {showReactivateModal && (
         <div style={{
-            backgroundColor: darkMode ? '#1e1e1e' : 'white',
-            padding: '2rem',
-            borderRadius: '10px',
-            maxWidth: '500px',
-            width: '90%'
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 1000
         }}>
-            <h2 style={{ marginTop: 0 }}>Account Deactivated</h2>
-            <p>Your account ({deactivatedUser?.email}) is currently deactivated.</p>
-            <p>Would you like to reactivate it?</p>
-            
-            {error && <p style={{ color: '#e74c3c' }}>{error}</p>}
-            
             <div style={{
-                display: 'flex',
-                justifyContent: 'flex-end',
-                marginTop: '1.5rem',
-                gap: '1rem'
+                backgroundColor: darkMode ? '#1e1e1e' : 'white',
+                padding: '2rem',
+                borderRadius: '10px',
+                maxWidth: '500px',
+                width: '90%'
             }}>
-                <button 
-                    onClick={() => setShowReactivateModal(false)}
-                    disabled={loading}
-                    style={{
-                        padding: '0.75rem 1.5rem',
-                        borderRadius: '6px',
-                        border: 'none',
-                        cursor: 'pointer'
-                    }}
-                >
-                    Cancel
-                </button>
-                <button 
-                    onClick={handleReactivation}
-                    disabled={loading}
-                    style={{
-                        backgroundColor: '#3498db',
-                        color: 'white',
-                        padding: '0.75rem 1.5rem',
-                        borderRadius: '6px',
-                        border: 'none',
-                        cursor: 'pointer'
-                    }}
-                >
-                    {loading ? 'Reactivating...' : 'Yes, Reactivate'}
-                </button>
+                <h2 style={{ marginTop: 0 }}>Account Deactivated</h2>
+                <p>Your account ({deactivatedUser?.email}) is currently deactivated.</p>
+                <p>Would you like to reactivate it?</p>
+                
+                {error && <p style={{ color: '#e74c3c' }}>{error}</p>}
+                
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    marginTop: '1.5rem',
+                    gap: '1rem'
+                }}>
+                    <button 
+                        onClick={() => setShowReactivateModal(false)}
+                        disabled={loading}
+                        style={{
+                            padding: '0.75rem 1.5rem',
+                            borderRadius: '6px',
+                            border: 'none',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={handleReactivation}
+                        disabled={loading}
+                        style={{
+                            backgroundColor: '#3498db',
+                            color: 'white',
+                            padding: '0.75rem 1.5rem',
+                            borderRadius: '6px',
+                            border: 'none',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        {loading ? 'Reactivating...' : 'Yes, Reactivate'}
+                    </button>
+                </div>
             </div>
         </div>
-    </div>
-)}
+      )}
 
       <ToastContainer
         position="top-right"

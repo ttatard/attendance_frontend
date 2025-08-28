@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import PropTypes from 'prop-types';
 
 const AddEventModal = ({ 
@@ -7,8 +7,11 @@ const AddEventModal = ({
   newEvent, 
   handleInputChange, 
   handleAddEvent, 
-  loading 
+  loading,
+  darkMode
 }) => {
+  const [error, setError] = useState(null); // Add local error state
+
   const modalStyles = {
     overlay: {
       position: 'fixed',
@@ -16,22 +19,23 @@ const AddEventModal = ({
       left: 0,
       right: 0,
       bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      backgroundColor: darkMode ? 'rgba(0, 0, 0, 0.7)' : 'rgba(0, 0, 0, 0.5)',
       zIndex: 1000,
       display: 'flex',
       justifyContent: 'center',
       alignItems: 'center',
     },
     modal: {
-      backgroundColor: 'white',
+      backgroundColor: darkMode ? '#1e1e1e' : 'white',
       borderRadius: '10px',
       padding: '2rem',
       width: '90%',
       maxWidth: '500px',
       maxHeight: '90vh',
       overflowY: 'auto',
-      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
       position: 'relative',
+      color: darkMode ? '#ffffff' : '#000000',
     },
     closeButton: {
       position: 'absolute',
@@ -41,13 +45,13 @@ const AddEventModal = ({
       border: 'none',
       fontSize: '1.5rem',
       cursor: 'pointer',
-      color: '#7f8c8d',
+      color: darkMode ? '#ffffff' : '#7f8c8d',
     },
   };
 
   const formStyles = {
     eventForm: {
-      backgroundColor: '#f8f9fa',
+      backgroundColor: darkMode ? '#2a2a2a' : '#f8f9fa',
       padding: '1.5rem',
       borderRadius: '8px',
       marginBottom: '1.5rem',
@@ -59,16 +63,18 @@ const AddEventModal = ({
     formLabel: {
       display: 'block',
       marginBottom: '0.5rem',
-      color: '#2c3e50',
+      color: darkMode ? '#ffffff' : '#2c3e50',
       fontWeight: '500'
     },
     formInput: {
       width: '100%',
       padding: '0.75rem',
-      border: '1px solid #ddd',
+      border: `1px solid ${darkMode ? '#444' : '#ddd'}`,
       borderRadius: '4px',
       fontSize: '1rem',
-      boxSizing: 'border-box'
+      boxSizing: 'border-box',
+      backgroundColor: darkMode ? '#1e1e1e' : 'white',
+      color: darkMode ? '#ffffff' : '#000000'
     },
     radioGroup: {
       display: 'flex',
@@ -91,15 +97,17 @@ const AddEventModal = ({
     },
     currencySymbol: {
       fontWeight: '600',
-      color: '#2c3e50'
+      color: darkMode ? '#ffffff' : '#2c3e50'
     },
     priceInput: {
       flex: 1,
       padding: '0.75rem',
-      border: '1px solid #ddd',
+      border: `1px solid ${darkMode ? '#444' : '#ddd'}`,
       borderRadius: '4px',
       fontSize: '1rem',
-      boxSizing: 'border-box'
+      boxSizing: 'border-box',
+      backgroundColor: darkMode ? '#1e1e1e' : 'white',
+      color: darkMode ? '#ffffff' : '#000000'
     },
     cardButton: {
       display: 'inline-block',
@@ -118,29 +126,48 @@ const AddEventModal = ({
       fontSize: '1rem'
     },
     cardTitle: {
-      color: '#2c3e50',
+      color: darkMode ? '#ffffff' : '#2c3e50',
+    },
+    errorText: {
+      color: '#e74c3c',
+      marginTop: '0.5rem',
+      fontSize: '0.9rem'
     }
   };
 
-  // Handle price type change
-  const handlePriceTypeChange = (e) => {
-    const priceType = e.target.value;
-    handleInputChange({
-      target: {
-        name: 'priceType',
-        value: priceType
-      }
-    });
-    
-    // Reset price when switching to free
-    if (priceType === 'free') {
-      handleInputChange({
-        target: {
-          name: 'price',
-          value: 0
-        }
-      });
+  const getRecurrenceUnit = (pattern) => {
+    switch (pattern) {
+      case 'daily': return 'day(s)';
+      case 'weekly': return 'week(s)';
+      case 'monthly': 
+      case 'weekly_x': return 'month(s)';
+      case 'yearly': return 'year(s)';
+      default: return '';
     }
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    setError(null);
+
+    // Basic validation
+    if (!newEvent.name || !newEvent.date || !newEvent.time) {
+      setError("Please fill all required fields");
+      return;
+    }
+
+    // Validate based on event type
+    if (newEvent.isOnline && !newEvent.meetingUrl) {
+      setError("Meeting link is required for online events");
+      return;
+    }
+
+    if (!newEvent.isOnline && !newEvent.place) {
+      setError("Location is required for in-person events");
+      return;
+    }
+
+    handleAddEvent(e);
   };
 
   if (!show) return null;
@@ -156,11 +183,11 @@ const AddEventModal = ({
           ×
         </button>
         
-        <form onSubmit={handleAddEvent} style={formStyles.eventForm}>
+        <form onSubmit={handleSubmit} style={formStyles.eventForm}>
           <h3 style={{ marginBottom: '1rem', color: formStyles.cardTitle.color }}>Create New Event</h3>
           
           <div style={formStyles.formGroup}>
-            <label htmlFor="event-name" style={formStyles.formLabel}>Event Name</label>
+            <label htmlFor="event-name" style={formStyles.formLabel}>Event Name *</label>
             <input
               type="text"
               id="event-name"
@@ -173,7 +200,7 @@ const AddEventModal = ({
           </div>
           
           <div style={formStyles.formGroup}>
-            <label htmlFor="event-date" style={formStyles.formLabel}>Date</label>
+            <label htmlFor="event-date" style={formStyles.formLabel}>Date *</label>
             <input
               type="date"
               id="event-date"
@@ -187,7 +214,7 @@ const AddEventModal = ({
           </div>
 
           <div style={formStyles.formGroup}>
-            <label htmlFor="event-time" style={formStyles.formLabel}>Time</label>
+            <label htmlFor="event-time" style={formStyles.formLabel}>Time *</label>
             <input
               type="time"
               id="event-time"
@@ -201,17 +228,99 @@ const AddEventModal = ({
           </div>
           
           <div style={formStyles.formGroup}>
-            <label htmlFor="event-place" style={formStyles.formLabel}>Location</label>
-            <input
-              type="text"
-              id="event-place"
-              name="place"
-              value={newEvent.place}
-              onChange={handleInputChange}
-              required
-              style={formStyles.formInput}
-            />
+            <label style={formStyles.formLabel}>Event Type *</label>
+            <div style={formStyles.radioGroup}>
+              <div style={formStyles.radioOption}>
+                <input
+                  type="radio"
+                  id="event-type-inperson"
+                  name="isOnline"
+                  value="false"
+                  checked={!newEvent.isOnline}
+                  onChange={() => handleInputChange({
+                    target: {
+                      name: 'isOnline',
+                      value: false
+                    }
+                  })}
+                  style={formStyles.radioInput}
+                />
+                <label htmlFor="event-type-inperson" style={{ color: darkMode ? '#ffffff' : '#000000' }}>In-Person</label>
+              </div>
+              <div style={formStyles.radioOption}>
+                <input
+                  type="radio"
+                  id="event-type-online"
+                  name="isOnline"
+                  value="true"
+                  checked={newEvent.isOnline}
+                  onChange={() => handleInputChange({
+                    target: {
+                      name: 'isOnline',
+                      value: true
+                    }
+                  })}
+                  style={formStyles.radioInput}
+                />
+                <label htmlFor="event-type-online" style={{ color: darkMode ? '#ffffff' : '#000000' }}>Online</label>
+              </div>
+            </div>
           </div>
+
+          {!newEvent.isOnline ? (
+            <div style={formStyles.formGroup}>
+              <label htmlFor="event-place" style={formStyles.formLabel}>Location *</label>
+              <input
+                type="text"
+                id="event-place"
+                name="place"
+                value={newEvent.place}
+                onChange={handleInputChange}
+                required={!newEvent.isOnline}
+                style={formStyles.formInput}
+              />
+            </div>
+          ) : (
+            <>
+              <div style={formStyles.formGroup}>
+                <label htmlFor="meeting-url" style={formStyles.formLabel}>Meeting Link *</label>
+                <input
+                  type="url"
+                  id="meeting-url"
+                  name="meetingUrl"
+                  value={newEvent.meetingUrl}
+                  onChange={handleInputChange}
+                  required={newEvent.isOnline}
+                  style={formStyles.formInput}
+                  placeholder="https://meet.example.com/your-meeting"
+                />
+              </div>
+              <div style={formStyles.formGroup}>
+                <label htmlFor="meeting-id" style={formStyles.formLabel}>Meeting ID (optional)</label>
+                <input
+                  type="text"
+                  id="meeting-id"
+                  name="meetingId"
+                  value={newEvent.meetingId}
+                  onChange={handleInputChange}
+                  style={formStyles.formInput}
+                  placeholder="123 456 7890"
+                />
+              </div>
+              <div style={formStyles.formGroup}>
+                <label htmlFor="meeting-passcode" style={formStyles.formLabel}>Meeting Passcode (optional)</label>
+                <input
+                  type="text"
+                  id="meeting-passcode"
+                  name="meetingPasscode"
+                  value={newEvent.meetingPasscode}
+                  onChange={handleInputChange}
+                  style={formStyles.formInput}
+                  placeholder="Password123"
+                />
+              </div>
+            </>
+          )}
           
           <div style={formStyles.formGroup}>
             <label htmlFor="event-description" style={formStyles.formLabel}>Description</label>
@@ -224,6 +333,125 @@ const AddEventModal = ({
             />
           </div>
 
+          {/* Recurrence Options */}
+          <div style={formStyles.formGroup}>
+            <label style={formStyles.formLabel}>Recurrence Pattern</label>
+            <select
+              name="recurrencePattern"
+              value={newEvent.recurrencePattern || 'none'}
+              onChange={handleInputChange}
+              style={formStyles.formInput}
+            >
+              <option value="none">No recurrence</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly (same day)</option>
+              <option value="monthly">Monthly (same date)</option>
+              <option value="weekly_x">Monthly (nth weekday)</option>
+              <option value="yearly">Yearly</option>
+            </select>
+          </div>
+
+          {newEvent.recurrencePattern && newEvent.recurrencePattern !== 'none' && (
+            <>
+              <div style={formStyles.formGroup}>
+                <label style={formStyles.formLabel}>Repeat every</label>
+                <input
+                  type="number"
+                  name="recurrenceInterval"
+                  min="1"
+                  value={newEvent.recurrenceInterval || 1}
+                  onChange={handleInputChange}
+                  style={formStyles.formInput}
+                />
+                <span style={{ marginLeft: '0.5rem', color: darkMode ? '#b0b0b0' : '#7f8c8d' }}>
+                  {getRecurrenceUnit(newEvent.recurrencePattern)}
+                </span>
+              </div>
+
+              <div style={formStyles.formGroup}>
+                <label style={formStyles.formLabel}>Ends</label>
+                <div style={formStyles.radioGroup}>
+                  <div style={formStyles.radioOption}>
+                    <input
+                      type="radio"
+                      id="endNever"
+                      name="endOption"
+                      value="never"
+                      checked={!newEvent.recurrenceEndDate && !newEvent.recurrenceCount}
+                      onChange={() => {
+                        handleInputChange({
+                          target: {
+                            name: 'recurrenceEndDate',
+                            value: null
+                          }
+                        });
+                        handleInputChange({
+                          target: {
+                            name: 'recurrenceCount',
+                            value: null
+                          }
+                        });
+                      }}
+                      style={formStyles.radioInput}
+                    />
+                    <label htmlFor="endNever" style={{ color: darkMode ? '#ffffff' : '#000000' }}>Never</label>
+                  </div>
+                  <div style={formStyles.radioOption}>
+                    <input
+                      type="radio"
+                      id="endOn"
+                      name="endOption"
+                      value="on"
+                      checked={!!newEvent.recurrenceEndDate}
+                      onChange={() => {}}
+                      style={formStyles.radioInput}
+                    />
+                    <label htmlFor="endOn" style={{ color: darkMode ? '#ffffff' : '#000000' }}>On</label>
+                    <input
+                      type="date"
+                      name="recurrenceEndDate"
+                      value={newEvent.recurrenceEndDate || ''}
+                      onChange={handleInputChange}
+                      style={{ 
+                        ...formStyles.formInput, 
+                        width: 'auto', 
+                        marginLeft: '0.5rem',
+                        backgroundColor: darkMode ? '#1e1e1e' : 'white'
+                      }}
+                      min={newEvent.date}
+                    />
+                  </div>
+                  <div style={formStyles.radioOption}>
+                    <input
+                      type="radio"
+                      id="endAfter"
+                      name="endOption"
+                      value="after"
+                      checked={!!newEvent.recurrenceCount}
+                      onChange={() => {}}
+                      style={formStyles.radioInput}
+                    />
+                    <label htmlFor="endAfter" style={{ color: darkMode ? '#ffffff' : '#000000' }}>After</label>
+                    <input
+                      type="number"
+                      name="recurrenceCount"
+                      min="1"
+                      value={newEvent.recurrenceCount || ''}
+                      onChange={handleInputChange}
+                      style={{ 
+                        ...formStyles.formInput, 
+                        width: '80px', 
+                        marginLeft: '0.5rem',
+                        backgroundColor: darkMode ? '#1e1e1e' : 'white'
+                      }}
+                    />
+                    <span style={{ marginLeft: '0.5rem', color: darkMode ? '#b0b0b0' : '#7f8c8d' }}>occurrences</span>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
           {/* Price Options */}
           <div style={formStyles.formGroup}>
             <label style={formStyles.formLabel}>Event Price</label>
@@ -232,31 +460,40 @@ const AddEventModal = ({
                 <input
                   type="radio"
                   id="price-free"
-                  name="priceType"
-                  value="free"
-                  checked={newEvent.priceType === 'free'}
-                  onChange={handlePriceTypeChange}
+                  name="isFree"
+                  value="true"
+                  checked={newEvent.isFree === true}
+                  onChange={() => handleInputChange({
+                    target: {
+                      name: 'isFree',
+                      value: true
+                    }
+                  })}
                   style={formStyles.radioInput}
                 />
-                <label htmlFor="price-free">Free</label>
+                <label htmlFor="price-free" style={{ color: darkMode ? '#ffffff' : '#000000' }}>Free</label>
               </div>
               
               <div style={formStyles.radioOption}>
                 <input
                   type="radio"
                   id="price-paid"
-                  name="priceType"
-                  value="paid"
-                  checked={newEvent.priceType === 'paid'}
-                  onChange={handlePriceTypeChange}
+                  name="isFree"
+                  value="false"
+                  checked={newEvent.isFree === false}
+                  onChange={() => handleInputChange({
+                    target: {
+                      name: 'isFree',
+                      value: false
+                    }
+                  })}
                   style={formStyles.radioInput}
                 />
-                <label htmlFor="price-paid">Paid Event</label>
+                <label htmlFor="price-paid" style={{ color: darkMode ? '#ffffff' : '#000000' }}>Paid Event</label>
               </div>
             </div>
             
-            {/* Price Input - Only show when "Paid Event" is selected */}
-            {newEvent.priceType === 'paid' && (
+            {newEvent.isFree === false && (
               <div style={formStyles.priceInputGroup}>
                 <span style={formStyles.currencySymbol}>₱</span>
                 <input
@@ -268,12 +505,16 @@ const AddEventModal = ({
                   placeholder="0.00"
                   min="0"
                   step="0.01"
-                  required={newEvent.priceType === 'paid'}
+                  required={newEvent.isFree === false}
                   style={formStyles.priceInput}
                 />
               </div>
             )}
           </div>
+          
+          {error && (
+            <div style={formStyles.errorText}>{error}</div>
+          )}
           
           <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
             <button 
@@ -319,12 +560,21 @@ AddEventModal.propTypes = {
     time: PropTypes.string,
     place: PropTypes.string,
     description: PropTypes.string,
-    priceType: PropTypes.string,
+    isFree: PropTypes.bool,
     price: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    recurrencePattern: PropTypes.string,
+    recurrenceInterval: PropTypes.number,
+    recurrenceEndDate: PropTypes.string,
+    recurrenceCount: PropTypes.number,
+    isOnline: PropTypes.bool,
+    meetingUrl: PropTypes.string,
+    meetingId: PropTypes.string,
+    meetingPasscode: PropTypes.string,
   }).isRequired,
   handleInputChange: PropTypes.func.isRequired,
   handleAddEvent: PropTypes.func.isRequired,
   loading: PropTypes.bool.isRequired,
+  darkMode: PropTypes.bool.isRequired,
 };
 
 export default AddEventModal;

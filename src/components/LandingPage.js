@@ -11,6 +11,9 @@ const LandingPage = ({
   darkMode,
   toggleDarkMode 
 }) => {
+  // Get current userType with fallback to localStorage
+  const currentUserType = userType || localStorage.getItem('userType') || 'user';
+
   const styles = {
     container: {
       display: "flex",
@@ -97,7 +100,7 @@ const LandingPage = ({
   return (
     <div style={styles.container}>
       <Sidebar 
-        userType={userType}
+        userType={currentUserType}
         onSignOut={onSignOut}
         sidebarVisible={sidebarVisible}
         setSidebarVisible={setSidebarVisible}
@@ -110,37 +113,135 @@ const LandingPage = ({
         marginLeft: sidebarVisible ? '250px' : '0'
       }}>
         <div style={styles.header}>
-          <h1 style={styles.title}>Welcome to the Attendance App, {userData.firstName}</h1>
-          <p style={styles.subtitle}>Manage events and track attendance with ease</p>
+          <h1 style={styles.title}>
+            Welcome to the Attendance App, {userData.firstName}
+            {currentUserType === 'system_owner' && ' (System Owner)'}
+            {currentUserType === 'admin' && ' (Admin)'}
+          </h1>
+          <p style={styles.subtitle}>
+            {currentUserType === 'system_owner' 
+              ? 'Full system administration dashboard' 
+              : currentUserType === 'admin' 
+                ? 'Organization administration dashboard' 
+                : 'User attendance management'}
+          </p>
         </div>
 
         <div style={styles.content}>
+          {/* Common cards for all users */}
           <div style={styles.card}>
             <h2 style={styles.cardTitle}>Events</h2>
-            <p style={styles.cardText}>View and manage all upcoming events</p>
+            <p style={styles.cardText}>
+              {currentUserType === 'system_owner' 
+                ? 'View and manage all system events' 
+                : currentUserType === 'admin' 
+                  ? 'View and manage your organization events' 
+                  : 'View and register for events'}
+            </p>
             <Link 
-              to={userType === 'admin' ? "/admin" : "/events"} 
+              to={currentUserType === 'user' ? "/events" : "/admin/events"} 
               style={styles.cardButton}
             >
-              View Events
+              {currentUserType === 'user' ? 'View Events' : 'Manage Events'}
             </Link>
           </div>
 
           <div style={styles.card}>
             <h2 style={styles.cardTitle}>Reports</h2>
-            <p style={styles.cardText}>Generate attendance reports</p>
-            <Link to="/reports" style={styles.cardButton}>View Reports</Link>
+            <p style={styles.cardText}>
+              {currentUserType === 'system_owner' 
+                ? 'Generate system-wide reports and audit logs' 
+                : currentUserType === 'admin' 
+                  ? 'Generate organization reports' 
+                  : 'View your attendance history'}
+            </p>
+            <Link to="/reports" style={styles.cardButton}>
+              {currentUserType === 'user' ? 'My Attendance' : 'View Reports'}
+            </Link>
           </div>
 
+          {/* Admin and System Owner shared cards */}
+          {(currentUserType === 'admin' || currentUserType === 'system_owner') && (
+            <div style={styles.card}>
+              <h2 style={styles.cardTitle}>User Management</h2>
+              <p style={styles.cardText}>
+                {currentUserType === 'system_owner' 
+                  ? 'Manage organization users' 
+                  : 'Manage your organization users'}
+              </p>
+              <Link to="/manage-users" style={styles.cardButton}>
+                Manage Users
+              </Link>
+            </div>
+          )}
+
+          {/* System Owner specific cards */}
+          {currentUserType === 'system_owner' && (
+            <>
+              <div style={styles.card}>
+                <h2 style={styles.cardTitle}>All System Users</h2>
+                <p style={styles.cardText}>View and manage all user accounts across the entire system</p>
+                <Link to="/system/users" style={styles.cardButton}>
+                  All Users
+                </Link>
+              </div>
+              
+              <div style={styles.card}>
+                <h2 style={styles.cardTitle}>System Owners</h2>
+                <p style={styles.cardText}>Manage system owner accounts and permissions</p>
+                <Link to="/system/owners" style={styles.cardButton}>
+                  Manage Owners
+                </Link>
+              </div>
+
+              <div style={styles.card}>
+                <h2 style={styles.cardTitle}>System Settings</h2>
+                <p style={styles.cardText}>Configure system-wide settings, branding, and preferences</p>
+                <Link to="/system/settings" style={styles.cardButton}>
+                  System Settings
+                </Link>
+              </div>
+
+              <div style={styles.card}>
+                <h2 style={styles.cardTitle}>Audit Logs</h2>
+                <p style={styles.cardText}>View system-wide audit logs and activity reports</p>
+                <Link to="/system/audit" style={styles.cardButton}>
+                  Audit Logs
+                </Link>
+              </div>
+            </>
+          )}
+
+          {/* Common account card */}
           <div style={styles.card}>
             <h2 style={styles.cardTitle}>Account</h2>
-            <p style={styles.cardText}>Manage your account settings</p>
-            <Link to="/account" style={styles.cardButton}>Account Settings</Link>
+            <p style={styles.cardText}>Manage your account settings and preferences</p>
+            <Link to="/account" style={styles.cardButton}>
+              Account Settings
+            </Link>
+          </div>
+
+          {/* Settings card for all users */}
+          <div style={styles.card}>
+            <h2 style={styles.cardTitle}>Settings</h2>
+            <p style={styles.cardText}>
+              {currentUserType === 'system_owner' 
+                ? 'Personal settings and preferences' 
+                : currentUserType === 'admin' 
+                  ? 'Admin settings and preferences' 
+                  : 'User settings and preferences'}
+            </p>
+            <Link to="/settings" style={styles.cardButton}>
+              Settings
+            </Link>
           </div>
         </div>
 
         <div style={styles.footer}>
           <p>© {new Date().getFullYear()} Attendance App</p>
+          <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
+            Logged in as: <strong>{currentUserType === 'system_owner' ? 'System Owner' : currentUserType === 'admin' ? 'Administrator' : 'User'}</strong>
+          </p>
         </div>
       </div>
     </div>

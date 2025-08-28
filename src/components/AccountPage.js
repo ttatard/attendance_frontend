@@ -18,7 +18,7 @@ const AccountPage = ({
   const [showSuccessNotification, setShowSuccessNotification] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [enrolledOrganization, setEnrolledOrganization] = useState(null);
+  const [enrolledOrganizations, setEnrolledOrganizations] = useState([]);
   const [currentOrganization, setCurrentOrganization] = useState(null);
   const [organizationMembers, setOrganizationMembers] = useState([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
@@ -89,88 +89,86 @@ const AccountPage = ({
 
   // Fetch user data and organization info on component mount
   useEffect(() => {
-    // Replace the fetchUserData function in AccountPage.js with this fixed version
-
-const fetchUserData = async () => {
-  setLoading(true);
-  setError(null);
-  
-  try {
-    const token = localStorage.getItem('authToken');
-    if (!token) {
-      throw new Error('No authentication token found');
-    }
-
-    const response = await axios.get('http://localhost:8080/api/users/me', {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    });
-    
-    const { 
-      id, firstName, lastName, email, birthday, gender, accountType, 
-      ministry, apostolate, spouseName, address, createdAt, updatedAt,
-      enrolledOrganization 
-    } = response.data;
-    
-    const userData = {
-      id: id || null,
-      firstName: firstName || '',
-      lastName: lastName || '',
-      email: email || '',
-      birthday: birthday || null,
-      gender: gender ? gender.toLowerCase() : '',
-      accountType: accountType || 'USER',
-      ministry: ministry || '',
-      apostolate: apostolate || '',
-      spouseName: spouseName || '',
-      address: address || '',
-      createdAt: createdAt || null,
-      updatedAt: updatedAt || null
-    };
-    
-    setUserData(userData);
-    
-    setFormData({
-      firstName: firstName || '',
-      lastName: lastName || '',
-      birthday: birthday || '',
-      gender: gender ? gender.toLowerCase() : '',
-      ministry: ministry || '',
-      apostolate: apostolate || '',
-      spouseName: spouseName || '',
-      address: address || ''
-    });
-
-    // Set enrolled organization for regular users
-    if (enrolledOrganization) {
-      setEnrolledOrganization(enrolledOrganization);
-    }
-
-    // Fetch organization information for admin users
-    if (accountType === 'ADMIN') {
+    const fetchUserData = async () => {
+      setLoading(true);
+      setError(null);
+      
       try {
-        const orgResponse = await axios.get(`http://localhost:8080/api/organizers/by-user/${id}`, {
-          headers: { Authorization: `Bearer ${token}` }
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+          throw new Error('No authentication token found');
+        }
+
+        const response = await axios.get('http://localhost:8080/api/users/me', {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
         });
-        setCurrentOrganization(orgResponse.data);
-      } catch (orgError) {
-        console.error('Error fetching admin organization:', orgError);
+        
+        const { 
+          id, firstName, lastName, email, birthday, gender, accountType, 
+          ministry, apostolate, spouseName, address, createdAt, updatedAt,
+          enrolledOrganizations 
+        } = response.data;
+        
+        const userData = {
+          id: id || null,
+          firstName: firstName || '',
+          lastName: lastName || '',
+          email: email || '',
+          birthday: birthday || null,
+          gender: gender ? gender.toLowerCase() : '',
+          accountType: accountType || 'USER',
+          ministry: ministry || '',
+          apostolate: apostolate || '',
+          spouseName: spouseName || '',
+          address: address || '',
+          createdAt: createdAt || null,
+          updatedAt: updatedAt || null
+        };
+        
+        setUserData(userData);
+        
+        setFormData({
+          firstName: firstName || '',
+          lastName: lastName || '',
+          birthday: birthday || '',
+          gender: gender ? gender.toLowerCase() : '',
+          ministry: ministry || '',
+          apostolate: apostolate || '',
+          spouseName: spouseName || '',
+          address: address || ''
+        });
+
+        // Set enrolled organizations for regular users
+        if (enrolledOrganizations) {
+          setEnrolledOrganizations(enrolledOrganizations);
+        }
+
+        // Fetch organization information for admin users
+        if (accountType === 'ADMIN') {
+          try {
+            const orgResponse = await axios.get(`http://localhost:8080/api/organizers/by-user/${id}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            setCurrentOrganization(orgResponse.data);
+          } catch (orgError) {
+            console.error('Error fetching admin organization:', orgError);
+          }
+        }
+        
+      } catch (err) {
+        console.error('Error fetching user data:', err);
+        setError('Failed to load user data. Please try refreshing the page.');
+        
+        if (err.response?.status === 401) {
+          localStorage.removeItem('authToken');
+          navigate('/');
+        }
+      } finally {
+        setLoading(false);
       }
-    }
-    
-  } catch (err) {
-    console.error('Error fetching user data:', err);
-    setError('Failed to load user data. Please try refreshing the page.');
-    
-    if (err.response?.status === 401) {
-      localStorage.removeItem('authToken');
-      navigate('/');
-    }
-  } finally {
-    setLoading(false);
-  }
-};
+    };
     
     fetchUserData();
   }, []);
@@ -188,8 +186,8 @@ const fetchUserData = async () => {
       
       // Filter users enrolled in this organization
       const members = response.data.filter(user => 
-        user.enrolledOrganization && 
-        user.enrolledOrganization.id === currentOrganization.id
+        user.enrolledOrganizations && 
+        user.enrolledOrganizations.some(org => org.id === currentOrganization.id)
       );
       
       setOrganizationMembers(members);
@@ -263,7 +261,11 @@ const fetchUserData = async () => {
         }
       });
       
-      const { id, firstName, lastName, email, birthday, gender, accountType, ministry, apostolate, spouseName, address, createdAt, updatedAt } = response.data;
+      const { 
+        id, firstName, lastName, email, birthday, gender, accountType, 
+        ministry, apostolate, spouseName, address, createdAt, updatedAt,
+        enrolledOrganizations 
+      } = response.data;      
       
       const updatedUserData = {
         id,
@@ -971,7 +973,7 @@ const fetchUserData = async () => {
               {/* Organization Information */}
               <div style={styles.detailRow}>
                 <span style={styles.detailLabel}>
-                  {userData.accountType === 'ADMIN' ? 'My Organization:' : 'Enrolled Organization:'}
+                  {userData.accountType === 'ADMIN' ? 'My Organization:' : 'Enrolled Organizations:'}
                 </span>
                 <span style={styles.detailValue}>
                   {userData.accountType === 'ADMIN' ? (
@@ -994,14 +996,18 @@ const fetchUserData = async () => {
                       'No organization found'
                     )
                   ) : (
-                    enrolledOrganization ? (
+                    enrolledOrganizations && enrolledOrganizations.length > 0 ? (
                       <div style={styles.organizationCard}>
-                        <div style={styles.organizationName}>
-                          {enrolledOrganization.organizationName || 'Unnamed Organization'}
-                        </div>
-                        <div style={styles.organizationDetails}>
-                          Organization ID: {enrolledOrganization.id}
-                        </div>
+                        {enrolledOrganizations.map(org => (
+                          <div key={org.id} style={{marginBottom: '1rem'}}>
+                            <div style={styles.organizationName}>
+                              {org.organizationName || 'Unnamed Organization'}
+                            </div>
+                            <div style={styles.organizationDetails}>
+                              Organization ID: {org.id}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     ) : (
                       'Not enrolled in any organization'

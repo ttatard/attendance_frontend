@@ -18,10 +18,10 @@ const UserManagement = ({
   const [currentOrganization, setCurrentOrganization] = useState(null);
   const [activeTab, setActiveTab] = useState('all');
   const [processing, setProcessing] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   
   const navigate = useNavigate();
 
-  // Single effect that runs only once on component mount
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -46,7 +46,7 @@ const UserManagement = ({
 
         setCurrentOrganization(orgResponse.data.id);
 
-        // Transform users with proper organization mapping
+        // Transform users with multiple organization support
         const transformedUsers = usersResponse.data.map(user => ({
           id: user.id,
           firstName: user.firstName,
@@ -56,8 +56,8 @@ const UserManagement = ({
           ministry: user.ministry,
           apostolate: user.apostolate,
           isDeactivated: user.isDeactivated,
-          organizationId: user.enrolledOrganization?.id || null,
-          enrolledOrganization: user.enrolledOrganization
+          enrolledOrganizations: user.enrolledOrganizations || [],
+          isEnrolledInCurrentOrg: user.enrolledOrganizations?.some(org => org.id === orgResponse.data.id) || false
         }));
 
         setUsers(transformedUsers);
@@ -65,8 +65,8 @@ const UserManagement = ({
         console.log('Initial data loaded:', {
           organizationId: orgResponse.data.id,
           totalUsers: transformedUsers.length,
-          enrolled: transformedUsers.filter(u => u.organizationId === orgResponse.data.id).length,
-          notEnrolled: transformedUsers.filter(u => u.organizationId === null).length
+          enrolled: transformedUsers.filter(u => u.isEnrolledInCurrentOrg).length,
+          notEnrolled: transformedUsers.filter(u => !u.enrolledOrganizations || u.enrolledOrganizations.length === 0).length
         });
         
       } catch (err) {
@@ -98,11 +98,10 @@ const UserManagement = ({
       }
     };
 
-    // Only fetch data if we have userData.id
     if (userData?.id) {
       fetchData();
     }
-  }, []); // Empty dependency array - runs only once on mount
+  }, []);
 
   const handleEnrollUser = async (userId) => {
     try {
@@ -124,14 +123,17 @@ const UserManagement = ({
         }
       );
 
-      // Optimistic UI update - no need to re-fetch all data
+      // Optimistic UI update
       setUsers(prevUsers => 
         prevUsers.map(user => 
           user.id === userId 
             ? { 
                 ...user, 
-                organizationId: currentOrganization,
-                enrolledOrganization: { id: currentOrganization }
+                enrolledOrganizations: [
+                  ...(user.enrolledOrganizations || []),
+                  { id: currentOrganization }
+                ],
+                isEnrolledInCurrentOrg: true
               }
             : user
         )
@@ -155,7 +157,7 @@ const UserManagement = ({
 
       await axios.post(
         `http://localhost:8080/api/users/${userId}/unenroll`,
-        {},
+        { organizationId: currentOrganization },
         {
           headers: {
             Authorization: `Bearer ${token}`
@@ -163,14 +165,14 @@ const UserManagement = ({
         }
       );
 
-      // Optimistic UI update - no need to re-fetch all data
+      // Optimistic UI update
       setUsers(prevUsers => 
         prevUsers.map(user => 
           user.id === userId 
             ? { 
                 ...user, 
-                organizationId: null,
-                enrolledOrganization: null
+                enrolledOrganizations: user.enrolledOrganizations?.filter(org => org.id !== currentOrganization) || [],
+                isEnrolledInCurrentOrg: false
               }
             : user
         )
@@ -191,17 +193,22 @@ const UserManagement = ({
     navigate('/');
   };
 
-  // Manual refresh function (optional - you can add a refresh button if needed)
   const handleManualRefresh = async () => {
     setLoading(true);
     setError(null);
     
     try {
       const token = localStorage.getItem('authToken');
-      const usersResponse = await axios.get('http://localhost:8080/api/users', {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 10000
-      });
+      const [orgResponse, usersResponse] = await Promise.all([
+        axios.get(`http://localhost:8080/api/organizers/by-user/${userData.id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: 10000
+        }),
+        axios.get('http://localhost:8080/api/users', {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: 10000
+        })
+      ]);
 
       const transformedUsers = usersResponse.data.map(user => ({
         id: user.id,
@@ -212,8 +219,8 @@ const UserManagement = ({
         ministry: user.ministry,
         apostolate: user.apostolate,
         isDeactivated: user.isDeactivated,
-        organizationId: user.enrolledOrganization?.id || null,
-        enrolledOrganization: user.enrolledOrganization
+        enrolledOrganizations: user.enrolledOrganizations || [],
+        isEnrolledInCurrentOrg: user.enrolledOrganizations?.some(org => org.id === orgResponse.data.id) || false
       }));
 
       setUsers(transformedUsers);
@@ -226,34 +233,53 @@ const UserManagement = ({
     }
   };
 
-  // Memoized filtered users - these will only recalculate when users or currentOrganization change
+  const clearSearch = () => {
+    setSearchTerm('');
+  };
+
+  // Memoized filtered users
   const enrolledUsers = useMemo(() => 
-    users.filter(user => user.organizationId === currentOrganization),
-    [users, currentOrganization]
+    users.filter(user => user.isEnrolledInCurrentOrg),
+    [users]
   );
 
   const notEnrolledUsers = useMemo(() => 
-    users.filter(user => user.organizationId === null || user.organizationId === undefined),
+    users.filter(user => !user.enrolledOrganizations || user.enrolledOrganizations.length === 0),
     [users]
   );
 
   const enrolledElsewhereUsers = useMemo(() => 
     users.filter(user => 
-      user.organizationId && user.organizationId !== currentOrganization
+      user.enrolledOrganizations?.length > 0 && !user.isEnrolledInCurrentOrg
     ),
-    [users, currentOrganization]
+    [users]
   );
 
-  const getFilteredUsers = () => {
+  // Search functionality
+  const filteredUsers = useMemo(() => {
+    let baseUsers;
     switch (activeTab) {
       case 'enrolled':
-        return enrolledUsers;
+        baseUsers = enrolledUsers;
+        break;
       case 'notEnrolled':
-        return notEnrolledUsers;
+        baseUsers = notEnrolledUsers;
+        break;
       default:
-        return users;
+        baseUsers = users;
     }
-  };
+
+    if (!searchTerm.trim()) {
+      return baseUsers;
+    }
+
+    const searchLower = searchTerm.toLowerCase();
+    return baseUsers.filter(user => {
+      const fullName = `${user.firstName} ${user.lastName}`.toLowerCase();
+      const email = user.email.toLowerCase();
+      return fullName.includes(searchLower) || email.includes(searchLower);
+    });
+  }, [users, enrolledUsers, notEnrolledUsers, activeTab, searchTerm]);
 
   const styles = {
     container: {
@@ -306,6 +332,44 @@ const UserManagement = ({
       fontSize: '0.9rem',
       opacity: loading ? 0.7 : 1,
       pointerEvents: loading ? 'none' : 'auto',
+    },
+    searchContainer: {
+      marginBottom: '1rem',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '0.5rem',
+    },
+    searchBox: {
+      padding: '0.75rem 1rem',
+      fontSize: '1rem',
+      border: darkMode ? '1px solid #444' : '1px solid #ddd',
+      borderRadius: '8px',
+      backgroundColor: darkMode ? '#2a2a2a' : '#ffffff',
+      color: darkMode ? '#ffffff' : '#000000',
+      width: '100%',
+      maxWidth: '400px',
+      outline: 'none',
+      transition: 'border-color 0.3s ease',
+    },
+    searchBoxFocus: {
+      borderColor: darkMode ? '#64b5f6' : '#3498db',
+    },
+    clearButton: {
+      backgroundColor: darkMode ? '#666' : '#ccc',
+      color: darkMode ? '#ffffff' : '#000000',
+      border: 'none',
+      padding: '0.75rem 1rem',
+      borderRadius: '8px',
+      cursor: 'pointer',
+      fontSize: '0.9rem',
+      minWidth: '60px',
+    },
+    searchStats: {
+      textAlign: 'center',
+      margin: '0.5rem 0',
+      fontSize: '0.9rem',
+      color: darkMode ? '#aaaaaa' : '#666666',
     },
     tableContainer: {
       overflowX: 'auto',
@@ -478,7 +542,6 @@ const UserManagement = ({
           <h1 style={styles.title}>User Management</h1>
           <p>Manage user enrollment in your organization</p>
           
-          {/* Optional manual refresh button */}
           <div style={styles.headerActions}>
             <button 
               style={styles.refreshButton}
@@ -511,6 +574,38 @@ const UserManagement = ({
           </button>
         </div>
 
+        <div style={styles.searchContainer}>
+          <input
+            type="text"
+            placeholder="Search by name or email..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{
+              ...styles.searchBox,
+              ...(searchTerm && styles.searchBoxFocus)
+            }}
+          />
+          {searchTerm && (
+            <button
+              onClick={clearSearch}
+              style={styles.clearButton}
+              title="Clear search"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
+        {searchTerm && (
+          <div style={styles.searchStats}>
+            Showing {filteredUsers.length} of {
+              activeTab === 'all' ? users.length : 
+              activeTab === 'enrolled' ? enrolledUsers.length : 
+              notEnrolledUsers.length
+            } users matching "{searchTerm}"
+          </div>
+        )}
+
         <div style={styles.tableContainer}>
           <table style={styles.table}>
             <thead>
@@ -529,28 +624,33 @@ const UserManagement = ({
                   </td>
                 </tr>
               )}
-              {getFilteredUsers().length === 0 ? (
+              {filteredUsers.length === 0 ? (
                 <tr>
                   <td colSpan="4" style={styles.emptyState}>
-                    No users found in this category
+                    {searchTerm ? 
+                      `No users found matching "${searchTerm}"` : 
+                      'No users found in this category'
+                    }
                   </td>
                 </tr>
               ) : (
-                getFilteredUsers().map(user => (
+                filteredUsers.map(user => (
                   <tr key={user.id}>
                     <td style={styles.td}>{user.firstName} {user.lastName}</td>
                     <td style={styles.td}>{user.email}</td>
                     <td style={styles.td}>
-                      {!user.organizationId || user.organizationId === null ? (
-                        <span style={{...styles.statusBadge, ...styles.notEnrolledBadge}}>Not Enrolled</span>
-                      ) : user.organizationId === currentOrganization ? (
-                        <span style={{...styles.statusBadge, ...styles.sameOrgBadge}}>In Your Organization</span>
+                      {user.isEnrolledInCurrentOrg ? (
+                        <span style={{...styles.statusBadge, ...styles.sameOrgBadge}}>Enrolled</span>
+                      ) : user.enrolledOrganizations?.length > 0 ? (
+                        <span style={{...styles.statusBadge, ...styles.enrolledBadge}}>
+                          Enrolled in {user.enrolledOrganizations.length} organization(s)
+                        </span>
                       ) : (
-                        <span style={{...styles.statusBadge, ...styles.enrolledBadge}}>Enrolled Elsewhere</span>
+                        <span style={{...styles.statusBadge, ...styles.notEnrolledBadge}}>Not Enrolled</span>
                       )}
                     </td>
                     <td style={styles.td}>
-                      {!user.organizationId || user.organizationId === null ? (
+                      {!user.isEnrolledInCurrentOrg ? (
                         <button
                           style={styles.enrollButton}
                           onClick={() => handleEnrollUser(user.id)}
@@ -558,7 +658,7 @@ const UserManagement = ({
                         >
                           {processing ? 'Processing...' : 'Enroll'}
                         </button>
-                      ) : user.organizationId === currentOrganization ? (
+                      ) : (
                         <button
                           style={styles.unenrollButton}
                           onClick={() => handleUnenrollUser(user.id)}
@@ -566,7 +666,7 @@ const UserManagement = ({
                         >
                           {processing ? 'Processing...' : 'Unenroll'}
                         </button>
-                      ) : null}
+                      )}
                     </td>
                   </tr>
                 ))

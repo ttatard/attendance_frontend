@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { QRCodeCanvas } from 'qrcode.react';
 import { useNavigate } from 'react-router-dom';
 import AddEventModal from './AddEventModal';
 import Sidebar from '../components/Sidebar';
@@ -28,15 +27,27 @@ const AdminPage = ({
     date: '',
     time: '',
     place: '',
-    description: ''
+    description: '',
+    isFree: true,
+    price: '',
+    recurrencePattern: 'none',
+    recurrenceInterval: 1,
+    recurrenceEndDate: '',
+    recurrenceCount: '',
+    isOnline: false,
+    meetingUrl: '',
+    meetingId: '',
+    meetingPasscode: ''
   });
+  const [codeInputs, setCodeInputs] = useState({});
+  const [codeVerificationPopups, setCodeVerificationPopups] = useState({});
   const navigate = useNavigate();
 
   const API_BASE_URL = 'http://localhost:8080';
 
+  // Format time to AM/PM
   const formatTime = (timeString) => {
     if (!timeString) return '';
-    
     try {
       const time = typeof timeString === 'string' ? timeString : String(timeString);
       const [hours, minutes] = time.split(':');
@@ -50,9 +61,9 @@ const AdminPage = ({
     }
   };
 
+  // Format date to readable string
   const formatDate = (dateString) => {
     if (!dateString) return '';
-    
     try {
       const date = new Date(dateString);
       return date.toLocaleDateString('en-US', { 
@@ -66,9 +77,9 @@ const AdminPage = ({
     }
   };
 
+  // Format datetime for registrations
   const formatDateTime = (dateTimeString) => {
     if (!dateTimeString) return '';
-    
     try {
       const date = new Date(dateTimeString);
       return date.toLocaleString('en-US', {
@@ -84,7 +95,21 @@ const AdminPage = ({
     }
   };
 
-  const fetchEvents = async () => {
+  // Filter out past events
+  const filterPastEvents = (eventsList) => {
+    const currentDateTime = new Date();
+    return eventsList.filter(event => {
+      const eventDate = new Date(event.date);
+      const eventTime = event.time ? event.time.split(':') : [0, 0];
+      eventDate.setHours(parseInt(eventTime[0]), parseInt(eventTime[1] || 0), 0, 0);
+      
+      // Keep events that are in the future or today with future time
+      return eventDate >= currentDateTime;
+    });
+  };
+
+  // Fetch events from API
+  const fetchEvents = useCallback(async () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('authToken');
@@ -101,18 +126,15 @@ const AdminPage = ({
       });
 
       if (response.status === 200 && response.data) {
-        setEvents(response.data);
+        // Filter out past events before setting state
+        const filteredEvents = filterPastEvents(response.data);
+        setEvents(filteredEvents);
         setError(null);
       } else {
         throw new Error('No events data received');
       }
     } catch (err) {
-      console.error('Error fetching events:', {
-        message: err.message,
-        response: err.response?.data,
-        status: err.response?.status
-      });
-
+      console.error('Error fetching events:', err);
       if (err.response?.status === 401) {
         setError('Session expired. Please sign in again.');
         setTimeout(() => onSignOut(), 2000);
@@ -123,8 +145,9 @@ const AdminPage = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [onSignOut]);
 
+  // Fetch registrations for an event
   const fetchEventRegistrations = async (eventId) => {
     try {
       const token = localStorage.getItem('authToken');
@@ -152,6 +175,7 @@ const AdminPage = ({
     }
   };
 
+  // Handle registration approval toggle
   const handleToggleApproval = async (registrationId, eventId, currentStatus) => {
     try {
       setGlobalLoading(true);
@@ -161,7 +185,6 @@ const AdminPage = ({
         throw new Error('No authentication token found');
       }
 
-      // Toggle between APPROVED and PENDING
       const newStatus = currentStatus === 'APPROVED' ? 'PENDING' : 'APPROVED';
       const endpoint = newStatus === 'APPROVED' ? 'approve' : 'unapprove';
 
@@ -176,13 +199,9 @@ const AdminPage = ({
         }
       );
 
-      // Refresh registrations for this event
       await fetchEventRegistrations(eventId);
-      
-      // Show success message
       setShowSuccessPopup(true);
       setTimeout(() => setShowSuccessPopup(false), 3000);
-      
     } catch (err) {
       console.error('Error toggling registration approval:', err);
       setError('Failed to update registration status');
@@ -191,8 +210,9 @@ const AdminPage = ({
     }
   };
 
+  // Handle registration disapproval
   const handleDisapproveRegistration = async (registrationId, eventId) => {
-    if (!window.confirm('Are you sure you want to disapprove this registration? This will prevent the user from attending the event.')) {
+    if (!window.confirm('Are you sure you want to disapprove this registration?')) {
       return;
     }
 
@@ -215,9 +235,7 @@ const AdminPage = ({
         }
       );
 
-      // Refresh registrations for this event
       await fetchEventRegistrations(eventId);
-      
     } catch (err) {
       console.error('Error disapproving registration:', err);
       setError('Failed to disapprove registration');
@@ -226,12 +244,102 @@ const AdminPage = ({
     }
   };
 
+  // Show registrations for an event
   const handleShowRegistrations = async (eventId) => {
     setSelectedEventId(eventId);
     setShowRegistrations(true);
     await fetchEventRegistrations(eventId);
   };
 
+  // Handle code input change for specific events
+  const handleCodeInputChange = (eventId, value) => {
+    setCodeInputs(prev => ({
+      ...prev,
+      [eventId]: value.toUpperCase()
+    }));
+  };
+
+  // Verify code for attendance
+  const verifyCode = async (eventId, code) => {
+    try {
+      setGlobalLoading(true);
+      const token = localStorage.getItem('authToken');
+      
+      const response = await axios.post(
+        `${API_BASE_URL}/api/registrations/verify-code`,
+        { eventId, code },
+        {
+          headers: { 
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      // Show success popup for this specific event
+      setCodeVerificationPopups(prev => ({
+        ...prev,
+        [eventId]: {
+          show: true,
+          success: true,
+          message: response.data.message,
+          userName: response.data.userName,
+          userEmail: response.data.userEmail
+        }
+      }));
+      
+      // Auto-hide popup after 5 seconds
+      setTimeout(() => {
+        closeCodeVerificationPopup(eventId);
+      }, 5000);
+      
+      // Clear the input field for this event
+      setCodeInputs(prev => ({
+        ...prev,
+        [eventId]: ''
+      }));
+    } catch (err) {
+      // Check if this is the "already recorded" error
+      const errorMessage = err.response?.data?.message || 'Failed to verify code';
+      const isAlreadyRecorded = errorMessage.includes('already recorded');
+      
+      // Show error popup for this specific event
+      setCodeVerificationPopups(prev => ({
+        ...prev,
+        [eventId]: {
+          show: true,
+          success: false,
+          message: errorMessage,
+          userName: err.response?.data?.userName || '',
+          userEmail: err.response?.data?.userEmail || '',
+          isAlreadyRecorded: isAlreadyRecorded
+        }
+      }));
+      
+      // Auto-hide error popup after 5 seconds
+      setTimeout(() => {
+        closeCodeVerificationPopup(eventId);
+      }, 5000);
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
+
+  // Close the code verification popup for a specific event
+  const closeCodeVerificationPopup = (eventId) => {
+    setCodeVerificationPopups(prev => ({
+      ...prev,
+      [eventId]: {
+        show: false,
+        success: false,
+        message: '',
+        userName: '',
+        userEmail: ''
+      }
+    }));
+  };
+
+  // Create organizer profile if missing
   const createOrganizerProfile = async () => {
     try {
       setGlobalLoading(true);
@@ -262,6 +370,7 @@ const AdminPage = ({
     }
   };
 
+  // Handle input changes for new event form
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setNewEvent(prev => ({
@@ -270,12 +379,27 @@ const AdminPage = ({
     }));
   };
 
+  // Add new event
   const handleAddEvent = async (e) => {
     e.preventDefault();
     setError(null);
 
-    if (!newEvent.name || !newEvent.date || !newEvent.time || !newEvent.place) {
-      setError("Please fill all required fields");
+    // Validate the event data first
+    const validationErrors = validateEventData(newEvent);
+    if (validationErrors.length > 0) {
+      setError(validationErrors.join(', '));
+      return;
+    }
+
+    // Validation for online events
+    if (newEvent.isOnline && !newEvent.meetingUrl) {
+      setError("Meeting link is required for online events");
+      return;
+    }
+
+    // Validation for in-person events
+    if (!newEvent.isOnline && !newEvent.place) {
+      setError("Location is required for in-person events");
       return;
     }
 
@@ -287,15 +411,30 @@ const AdminPage = ({
         throw new Error('No authentication token found');
       }
       
-      await axios.post(
+      const payload = {
+        name: newEvent.name,
+        date: newEvent.date,
+        time: newEvent.time,
+        place: newEvent.place,
+        description: newEvent.description || "",
+        isFree: newEvent.isFree,
+        price: newEvent.isFree ? 0 : parseFloat(newEvent.price) || 0,
+        recurrencePattern: newEvent.recurrencePattern === 'none' ? null : newEvent.recurrencePattern,
+        recurrenceInterval: parseInt(newEvent.recurrenceInterval) || 1,
+        recurrenceEndDate: newEvent.recurrenceEndDate || null,
+        recurrenceCount: newEvent.recurrenceCount ? parseInt(newEvent.recurrenceCount) : null,
+        isOnline: newEvent.isOnline,
+        meetingUrl: newEvent.isOnline ? newEvent.meetingUrl : null,
+        meetingId: newEvent.isOnline ? newEvent.meetingId : null,
+        meetingPasscode: newEvent.isOnline ? newEvent.meetingPasscode : null,
+        requiresApproval: true
+      };
+      
+      console.log('Sending event payload:', JSON.stringify(payload, null, 2));
+      
+      const response = await axios.post(
         `${API_BASE_URL}/api/events`,
-        {
-          name: newEvent.name,
-          date: newEvent.date,
-          time: newEvent.time,
-          place: newEvent.place,
-          description: newEvent.description || ""
-        },
+        payload,
         {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -305,6 +444,9 @@ const AdminPage = ({
         }
       );
       
+      console.log('Event creation response:', response.data);
+      
+      // Reset form and show success
       setShowAddEventForm(false);
       setShowSuccessPopup(true);
       setNewEvent({
@@ -312,7 +454,17 @@ const AdminPage = ({
         date: '',
         time: '',
         place: '',
-        description: ''
+        description: '',
+        isFree: true,
+        price: '',
+        recurrencePattern: 'none',
+        recurrenceInterval: 1,
+        recurrenceEndDate: '',
+        recurrenceCount: '',
+        isOnline: false,
+        meetingUrl: '',
+        meetingId: '',
+        meetingPasscode: ''
       });
       
       setTimeout(() => {
@@ -321,26 +473,131 @@ const AdminPage = ({
       
       await fetchEvents();
     } catch (err) {
-      console.error('Failed to add event:', err);
+      console.error('Failed to add event details:', {
+        status: err.response?.status,
+        data: err.response?.data,
+        message: err.message,
+        config: err.config
+      });
+      
       if (err.response?.status === 401) {
         setError('Authentication failed. Please sign in again.');
         setTimeout(() => {
           onSignOut();
         }, 2000);
       } else {
-        setError(
-          err.response?.data?.message || 
-          err.response?.data?.error || 
-          'Failed to create event'
-        );
+        const errorData = err.response?.data;
+        let errorMessage = 'Failed to create event';
+        
+        if (errorData) {
+          if (errorData.message) {
+            errorMessage = errorData.message;
+          } else if (errorData.error) {
+            errorMessage = errorData.error;
+          } else if (typeof errorData === 'string') {
+            errorMessage = errorData;
+          } else if (Array.isArray(errorData)) {
+            errorMessage = errorData.map(err => err.defaultMessage || err.message).join(', ');
+          }
+        }
+        
+        setError(errorMessage);
       }
     } finally {
       setGlobalLoading(false);
     }
   };
 
+  // Updated validation function to properly handle same-day events
+  const validateEventData = (eventData) => {
+    const errors = [];
+    
+    // Required fields
+    if (!eventData.name?.trim()) errors.push('Event name is required');
+    if (!eventData.date) errors.push('Event date is required');
+    if (!eventData.time) errors.push('Event time is required');
+    
+    // Validate date format
+    if (eventData.date && !/^\d{4}-\d{2}-\d{2}$/.test(eventData.date)) {
+      errors.push('Date must be in YYYY-MM-DD format');
+      return errors; // Return early if date format is wrong
+    }
+    
+    // Validate time format (accepts HH:MM or HH:MM:SS)
+    if (eventData.time && !/^\d{2}:\d{2}(:\d{2})?$/.test(eventData.time)) {
+      errors.push('Time must be in HH:MM or HH:MM:SS format');
+      return errors; // Return early if time format is wrong
+    }
+    
+    // Check if date is in the past (but allow today)
+    if (eventData.date) {
+      const today = new Date();
+      const eventDate = new Date(eventData.date);
+      
+      // Set both dates to midnight for accurate comparison
+      today.setHours(0, 0, 0, 0);
+      eventDate.setHours(0, 0, 0, 0);
+      
+      if (eventDate < today) {
+        errors.push('Event date cannot be in the past');
+        return errors; // Return early since date is invalid
+      }
+    }
+    
+    // For same-day events, check if time is in the past
+    if (eventData.date && eventData.time) {
+      const today = new Date();
+      const eventDate = new Date(eventData.date);
+      
+      // Check if it's today
+      if (eventDate.toDateString() === today.toDateString()) {
+        const [hours, minutes] = eventData.time.split(':');
+        const eventDateTime = new Date();
+        eventDateTime.setHours(parseInt(hours), parseInt(minutes || 0), 0, 0);
+        
+        // Add a 5-minute buffer to allow for processing time
+        const currentTimeWithBuffer = new Date(today.getTime() + 5 * 60 * 1000);
+        
+        if (eventDateTime < currentTimeWithBuffer) {
+          errors.push('Event time must be at least 5 minutes in the future for today\'s events');
+        }
+      }
+    }
+    
+    // Validate price if not free
+    if (!eventData.isFree) {
+      const price = parseFloat(eventData.price);
+      if (isNaN(price) || price < 0) {
+        errors.push('Price must be a valid positive number');
+      }
+    }
+    
+    // Validate online event requirements
+    if (eventData.isOnline && !eventData.meetingUrl?.trim()) {
+      errors.push('Meeting URL is required for online events');
+    }
+    
+    // Validate in-person event requirements
+    if (!eventData.isOnline && !eventData.place?.trim()) {
+      errors.push('Location is required for in-person events');
+    }
+    
+    return errors;
+  };
+
+  // Delete event or event series
   const deleteEvent = async (eventId) => {
-    if (!window.confirm('Are you sure you want to delete this event?')) {
+    const event = events.find(e => e.id === eventId);
+    const isRecurring = event?.recurrencePattern && event.recurrencePattern !== 'NONE';
+    
+    let deleteSeries = false;
+    
+    if (isRecurring) {
+      deleteSeries = window.confirm(
+        'This is a recurring event. Do you want to delete just this instance or the entire series?\n\n' +
+        'Click OK to delete the entire series, or Cancel to delete just this instance.'
+      );
+    } else if (!window.confirm('Are you sure you want to delete this event?')) {
       return;
     }
 
@@ -355,12 +612,22 @@ const AdminPage = ({
       await axios.delete(
         `${API_BASE_URL}/api/events/${eventId}`,
         { 
+          params: { deleteSeries },
           headers: { 'Authorization': `Bearer ${token}` },
           timeout: 10000
         }
       );
       
-      setEvents(events.filter(event => event.id !== eventId));
+      setEvents(events.filter(event => {
+        if (deleteSeries) {
+          return event.id !== eventId && 
+                 event.originalEventId !== (event.originalEventId || eventId);
+        }
+        return event.id !== eventId;
+      }));
+      
+      setShowSuccessPopup(true);
+      setTimeout(() => setShowSuccessPopup(false), 3000);
     } catch (err) {
       console.error('Failed to delete event:', err);
       if (err.response?.status === 401) {
@@ -379,10 +646,29 @@ const AdminPage = ({
     }
   };
 
-  useEffect(() => {
-    fetchEvents();
-  }, []);
+  // Get recurrence unit for display
+  const getRecurrenceUnit = (pattern) => {
+    switch (pattern) {
+      case 'DAILY': return 'day(s)';
+      case 'WEEKLY': return 'week(s)';
+      case 'MONTHLY': 
+      case 'WEEKLY_X': return 'month(s)';
+      case 'YEARLY': return 'year(s)';
+      default: return '';
+    }
+  };
 
+  // Check authentication on initial load
+  useEffect(() => {
+    const token = localStorage.getItem('authToken');
+    if (!token) {
+      navigate('/login');
+    } else {
+      fetchEvents();
+    }
+  }, [navigate]);
+
+  // Styles
   const styles = {
     container: {
       display: "flex",
@@ -445,6 +731,7 @@ const AdminPage = ({
         boxShadow: "0 6px 12px rgba(0, 0, 0, 0.15)"
       },
       color: darkMode ? "#ffffff" : "#000000",
+      position: "relative",
     },
     eventHeader: {
       display: "flex",
@@ -462,36 +749,6 @@ const AdminPage = ({
       marginBottom: "0.75rem",
       fontSize: "1rem",
       textAlign: "left"
-    },
-    cardTitle: {
-      color: darkMode ? "#ffffff" : "#2c3e50",
-      fontSize: "1.5rem",
-      marginBottom: "1rem"
-    },
-    cardText: {
-      color: darkMode ? "#b0b0b0" : "#7f8c8d",
-      marginBottom: "1.5rem",
-      fontSize: "1rem"
-    },
-    cardButton: {
-      display: "inline-block",
-      backgroundColor: darkMode ? "#2196F3" : "#3498db",
-      color: "white",
-      padding: "0.75rem 1.5rem",
-      borderRadius: "6px",
-      textDecoration: "none",
-      fontWeight: "600",
-      transition: "background-color 0.3s ease",
-      ":hover": {
-        backgroundColor: darkMode ? "#1976D2" : "#2980b9"
-      },
-      border: "none",
-      cursor: "pointer",
-      fontSize: "1rem",
-      ":disabled": {
-        backgroundColor: darkMode ? "#757575" : "#95a5a6",
-        cursor: "not-allowed"
-      }
     },
     deleteButton: {
       backgroundColor: "#e74c3c",
@@ -532,30 +789,6 @@ const AdminPage = ({
         backgroundColor: "#2ecc71"
       }
     },
-    unapproveButton: {
-      backgroundColor: "#f39c12",
-      color: "white",
-      padding: "0.4rem 0.8rem",
-      borderRadius: "4px",
-      border: "none",
-      cursor: "pointer",
-      fontWeight: "500",
-      fontSize: "0.9rem",
-      marginRight: "0.5rem",
-      ":hover": {
-        backgroundColor: "#e67e22"
-      }
-    },
-    toggleButton: {
-      padding: "0.4rem 0.8rem",
-      borderRadius: "4px",
-      border: "none",
-      cursor: "pointer",
-      fontWeight: "500",
-      fontSize: "0.9rem",
-      marginRight: "0.5rem",
-      transition: "background-color 0.3s ease"
-    },
     disapproveButton: {
       backgroundColor: "#e74c3c",
       color: "white",
@@ -568,6 +801,16 @@ const AdminPage = ({
       ":hover": {
         backgroundColor: "#c0392b"
       }
+    },
+    toggleButton: {
+      padding: "0.4rem 0.8rem",
+      borderRadius: "4px",
+      border: "none",
+      cursor: "pointer",
+      fontWeight: "500",
+      fontSize: "0.9rem",
+      marginRight: "0.5rem",
+      transition: "background-color 0.3s ease"
     },
     registrationsList: {
       maxHeight: "400px",
@@ -644,41 +887,44 @@ const AdminPage = ({
       cursor: "pointer",
       color: darkMode ? "#ffffff" : "#000000"
     },
-    qrSection: {
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      marginTop: "1.5rem"
+    codeSection: {
+      marginTop: "1.5rem",
+      padding: "1rem",
+      backgroundColor: darkMode ? "#2a2a2a" : "#f8f9fa",
+      borderRadius: "8px",
     },
-    qrContainer: {
+    codeTitle: {
+      fontSize: "1.1rem",
+      marginBottom: "0.75rem",
+      color: darkMode ? "#ffffff" : "#2c3e50"
+    },
+    codeInputContainer: {
       display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
+      gap: "0.5rem",
       marginBottom: "1rem"
     },
-    qrLabel: {
-      fontSize: "0.9rem",
-      color: darkMode ? "#b0b0b0" : "#7f8c8d",
-      marginTop: "0.5rem"
-    },
-    qrCodeSection: {
-      width: "100%",
-      marginTop: "1rem"
-    },
-    qrCodeLabel: {
-      fontSize: "0.9rem",
-      fontWeight: "500",
-      color: darkMode ? "#b0b0b0" : "#7f8c8d",
-      marginBottom: "0.5rem"
-    },
-    qrCodeData: {
-      backgroundColor: darkMode ? "#2a2a2a" : "#f8f9fa",
-      padding: "0.75rem",
-      borderRadius: "6px",
-      overflowX: "auto",
-      wordBreak: "break-all",
-      fontSize: "0.8rem",
+    codeInput: {
+      flex: 1,
+      padding: "0.5rem",
+      border: "1px solid #ccc",
+      borderRadius: "4px",
+      fontSize: "1rem",
+      backgroundColor: darkMode ? "#1e1e1e" : "white",
       color: darkMode ? "#ffffff" : "#000000"
+    },
+    verifyButton: {
+      padding: "0.5rem 1rem",
+      backgroundColor: "#3498db",
+      color: "white",
+      border: "none",
+      borderRadius: "4px",
+      cursor: "pointer",
+      fontWeight: "500"
+    },
+    codeResult: {
+      padding: "0.75rem",
+      borderRadius: "4px",
+      fontSize: "0.9rem"
     },
     footer: {
       textAlign: "center",
@@ -740,14 +986,76 @@ const AdminPage = ({
       fontWeight: '500',
       margin: 0,
       flex: 1,
-    }
+    },
+    codeVerificationPopup: {
+      position: 'fixed',
+      top: '20px',
+      right: '20px',
+      zIndex: 2000,
+      animation: 'slideInRight 0.3s ease-out',
+      maxWidth: '400px',
+    },
+   getCodeVerificationPopupStyle: (popup, darkMode) => {
+  let borderColor;
+  if (popup.success) borderColor = darkMode ? "#4caf50" : "#27ae60";
+  else if (popup.isAlreadyRecorded) borderColor = darkMode ? "#ff9800" : "#f39c12";
+  else borderColor = darkMode ? "#f44336" : "#e74c3c";
+
+  return {
+    backgroundColor: darkMode ? '#1e1e1e' : 'white',
+    padding: '1.5rem',
+    borderRadius: '8px',
+    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
+    textAlign: 'center',
+    color: darkMode ? '#ffffff' : '#000000',
+    border: '2px solid',
+    borderColor: borderColor,
+  };
+},
+    codeVerificationPopupIcon: {
+      fontSize: '2rem',
+      marginBottom: '0.75rem',
+    },
+    codeVerificationPopupTitle: {
+      fontSize: '1.2rem',
+      marginBottom: '0.75rem',
+      color: darkMode ? '#ffffff' : '#2c3e50',
+    },
+    codeVerificationPopupMessage: {
+      fontSize: '0.9rem',
+      marginBottom: '1rem',
+      lineHeight: '1.4',
+    },
+    codeVerificationPopupButton: {
+      padding: '0.5rem 1rem',
+      backgroundColor: '#3498db',
+      color: 'white',
+      border: 'none',
+      borderRadius: '4px',
+      cursor: 'pointer',
+      fontWeight: '500',
+      fontSize: '0.9rem',
+    },
+    codeVerificationPopupDetails: {
+      backgroundColor: darkMode ? '#2a2a2a' : '#f8f9fa',
+      padding: '0.75rem',
+      borderRadius: '6px',
+      marginBottom: '0.75rem',
+      textAlign: 'left',
+    },
+    codeVerificationPopupDetail: {
+      marginBottom: '0.25rem',
+      fontSize: '0.9rem',
+    },
   };
 
+  // Check authentication
   const token = localStorage.getItem('authToken');
   if (!token) {
     return (
       <div style={styles.container}>
         <Sidebar 
+          userType="admin"
           onSignOut={onSignOut}
           sidebarVisible={sidebarVisible}
           setSidebarVisible={setSidebarVisible}
@@ -782,6 +1090,7 @@ const AdminPage = ({
         transition: 'filter 0.3s ease',
       }}>
         <Sidebar 
+          userType="admin"
           onSignOut={onSignOut}
           sidebarVisible={sidebarVisible}
           setSidebarVisible={setSidebarVisible}
@@ -872,37 +1181,51 @@ const AdminPage = ({
                       <p style={styles.eventDetail}>Date: {formatDate(event.date)}</p>
                       <p style={styles.eventDetail}>Time: {formatTime(event.time)}</p>
                       <p style={styles.eventDetail}>Location: {event.place}</p>
+                      
+                      {event.recurrencePattern && event.recurrencePattern !== 'NONE' && (
+                        <p style={styles.eventDetail}>
+                          Recurrence: {event.recurrencePattern.toLowerCase()} 
+                          (every {event.recurrenceInterval} {getRecurrenceUnit(event.recurrencePattern)})
+                          {event.recurrenceEndDate && (
+                            <span> until {formatDate(event.recurrenceEndDate)}</span>
+                          )}
+                          {event.recurrenceCount && (
+                            <span>, {event.recurrenceCount} occurrences</span>
+                          )}
+                        </p>
+                      )}
+                      
                       {event.description && (
                         <p style={styles.eventDetail}>Description: {event.description}</p>
                       )}
                       
-                      {event.qrCode && (
-                        <div style={styles.qrSection}>
-                          <div style={styles.qrContainer}>
-                            <QRCodeCanvas 
-                              value={event.qrCode} 
-                              size={150}
-                              level="H"
-                              includeMargin={true}
-                              bgColor={darkMode ? "#1e1e1e" : "#ffffff"}
-                              fgColor={darkMode ? "#ffffff" : "#000000"}
-                            />
-                            <p style={styles.qrLabel}>Scan to check in</p>
-                          </div>
-                          <div style={styles.qrCodeSection}>
-                            <p style={styles.qrCodeLabel}>QR Code Data:</p>
-                            <div style={styles.qrCodeData}>
-                              <code>{event.qrCode}</code>
-                            </div>
-                          </div>
+                      {/* Code Input Section */}
+                      <div style={styles.codeSection}>
+                        <h3 style={styles.codeTitle}>Check-in Attendee</h3>
+                        <div style={styles.codeInputContainer}>
+                          <input
+                            type="text"
+                            placeholder="Enter attendee code"
+                            value={codeInputs[event.id] || ''}
+                            onChange={(e) => handleCodeInputChange(event.id, e.target.value)}
+                            style={styles.codeInput}
+                            maxLength={6}
+                          />
+                          <button
+                            onClick={() => verifyCode(event.id, codeInputs[event.id] || '')}
+                            style={styles.verifyButton}
+                            disabled={globalLoading || !codeInputs[event.id] || codeInputs[event.id].length < 6}
+                          >
+                            Verify Code
+                          </button>
                         </div>
-                      )}
+                      </div>
                     </div>
                   ))
                 ) : (
                   <div style={styles.card}>
-                    <h2 style={styles.cardTitle}>No Events Found</h2>
-                    <p style={styles.cardText}>You haven't created any events yet.</p>
+                    <h2 style={styles.cardTitle}>No Upcoming Events Found</h2>
+                    <p style={styles.cardText}>You don't have any upcoming events. Create one to get started!</p>
                   </div>
                 )}
               </>
@@ -931,6 +1254,55 @@ const AdminPage = ({
             <p style={styles.successNotificationText}>Operation Completed Successfully!</p>
           </div>
         </div>
+      )}
+
+      {/* Code Verification Popups - Fixed at top right */}
+      {Object.entries(codeVerificationPopups).map(([eventId, popup]) => 
+        popup?.show && (
+          <div key={eventId} style={styles.codeVerificationPopup}>
+            <div style={styles.getCodeVerificationPopupStyle(popup, darkMode)}>
+              <div style={{
+                ...styles.codeVerificationPopupIcon,
+                color: popup.success ? 
+                  (darkMode ? "#4caf50" : "#27ae60") : 
+                  (darkMode ? "#f44336" : "#e74c3c")
+              }}>
+                {popup.success ? '✓' : '✗'}
+              </div>
+              
+              <h2 style={styles.codeVerificationPopupTitle}>
+                {popup.success ? 'Success!' : 'Error'}
+              </h2>
+              
+              <p style={styles.codeVerificationPopupMessage}>
+                {popup.message}
+              </p>
+              
+              {popup.success && (
+                <div style={styles.codeVerificationPopupDetails}>
+                  <p style={styles.codeVerificationPopupDetail}>
+                    <strong>Attendee:</strong> {popup.userName}
+                  </p>
+                  <p style={styles.codeVerificationPopupDetail}>
+                    <strong>Email:</strong> {popup.userEmail}
+                  </p>
+                </div>
+              )}
+              
+              <button 
+                onClick={() => closeCodeVerificationPopup(eventId)}
+                style={{
+                  ...styles.codeVerificationPopupButton,
+                  backgroundColor: popup.success ? 
+                    (darkMode ? "#4caf50" : "#27ae60") : 
+                    (darkMode ? "#f44336" : "#e74c3c")
+                }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        )
       )}
 
       {/* Registrations Modal */}
@@ -970,6 +1342,15 @@ const AdminPage = ({
                                 registration.status === 'DISAPPROVED' ? '#e74c3c' : '#f39c12'
                         }}>
                           Status: {registration.status}
+                        </div>
+                      )}
+                      {registration.uniqueCode && (
+                        <div style={{
+                          fontSize: "0.8rem",
+                          color: darkMode ? "#888" : "#95a5a6",
+                          marginTop: "0.25rem"
+                        }}>
+                          Code: {registration.uniqueCode}
                         </div>
                       )}
                     </div>
